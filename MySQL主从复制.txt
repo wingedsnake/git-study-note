@@ -1,0 +1,88 @@
+---- MySQL主从复制 ----
+
+    MySQL复制过程分成三步:
+        1.master将改变记录到二进制日志(binary log)。这些记录过程叫做二进制日志事件,binary log events;
+        2.slave将maser的binary log events拷贝到它的中继日志中(relay log);
+        3.slave重做中继日志中的实践,将改变应用到自己的数据库中。MySQL复制是异步的且串行化的。
+复制的基本原则:
+    每个slave只有一个master
+    每个slave只能有一个唯一的服务器ID
+    每个master可以有多个slave
+    
+影响主从复制的最大问题: 网络延时问题。
+
+一主一从常见配置:
+    要求(最好,不是强制要求): MySQL数据库的版本一直且后台以服务运行。
+    网络需要在同一网段。
+    主从都配置在my.ini或my.cnf文件的[mysqld]节点下,都是小写。
+
+    1.主机配置文件添加:
+        #--------- --------- ---------#
+            [mysqld]
+                                                              # .......  更多其他配置
+            server-id=1                                       # [必须]主服务器唯一ID
+            log-bin=(自己本地的路径)/(按规范命名,例:mysqlbin) # [必须]启用二进制日志
+            log-err=(自己本地的路径)/(例:mysqlerr)            # [可选]启用错误日志
+            basedir="(自己本地MySQL的安装路径)"               # [可选]根目录
+            tmpdir="(设置自己本地临时路径)"                   # [可选]临时目录
+            datadir="(自己本地数据库数据存放路径)"            # [可选]数据目录
+            binlog-ignore-db=(要忽略的数据库)                 # [可选]设置忽略的数据库(不要复制的数据库)
+            binlog-do-db=(设置需要从机复制的数据库)           # [可选]设置需要复制的数据库
+                                                              # .......  更多其他配置
+        #--------- --------- ---------#
+    2.从机配置文件添加:
+        #--------- --------- ---------#
+            [mysqld]
+                                                              # .......  更多其他配置
+            log-bin=mysql-bin                                 # [必须]开启主机二进制日志复制(默认开启，如果未开启则需要将其开启)
+            #server-id = 1                                    # 如果开启着主服务器唯一ID,则需要去掉
+                                                              # (此时ID为1的是主服务器)
+            server-id = 2                                     # 将从服务器ID改为2
+            log-bin=(自己本地的路径)/(按规范命名,例:mysqlbin) # [可选]启用二进制日志
+                                                              # .......  更多其他配置
+        #--------- --------- ---------#
+        
+      如果测试未通过,可以关闭防火墙(生成环境需要通过防火墙)
+    3.在Windows主机上建立账户并授权slave(MySQL命令):
+        
+        grant replication slave on *.* 'zhangsan'@'从机服务器IP' identified by '123456';  # 允许从机的zhangsan用户(密码为123456)登录到主服务器上复制数据 
+        flush privileges;           # 刷新授权
+        show master status;         # 查询主机的状态
+        
+        ------ 查看主机状态结果(示例) ------
+        +-----------+-----------+--------------+------------------+
+        |   File    |  Position | Binlog_Do_DB | Binlog_Ignore_DB |
+        +-----------+-----------+--------------+------------------+
+        |  mysqlbin |      341  |              |        mysql     |
+        +-----------+-----------+--------------+------------------+
+        
+        字段解释:
+            File              指从机要复制的二进制日志文件名。
+            Position          指从机要从主机服务器的File字段显示的文件中的341行位置开始复制。
+            Binlog_Do_DB      需要复制的数据库,如果没有显示,则表示复制主机除Binlog_Ignore_DB字段所显示的数据库外所有库。
+            Binlog_Ignore_DB  忽略要复制的数据库。
+    
+    4.在Linux从机上配置(MySQL命令)需要复制的主机:
+        change master to master_host='主机IP',master_user='(对应主机授权的用户名)',master_password='(对应主机授权的用户密码)',master_log_file='(主机的二进制日志文件名)',master_log_pos='(对应主机执行show master status命令时的position字段值)';
+        start slave;          # 启动从服务器复制功能
+        show slave status\G;  # 查看slave从机状态
+        
+        ------ 查看从机状态结果(部分示例) ------
+            Slave_IO_State: Waiting for master to send event
+               Master_Host: xxx.xxx.xxx.xxx
+               Master_User: xxxxxxxxx
+               Master_Port: 3306
+             Connect_Retry: 60
+        #..... 省略中间不重要的信息 .....
+          Slave_IO_Running: Yes
+         Slave_SQL_Running: Yes
+        #..... 省略中间不重要的信息 .....
+      
+        重点: Slave_IO_Running与Slave_SQL_Running一定要都为Yes,才表示为配置成功。
+        
+    5.停止从主机服务器复制功能(MySQL命令):
+        stop slave;
+        
+#### 如果从机进行配置命令时,发生 run STOP SlAVE first 错误,则说明之前做过同步操作,需要先停止主机复制功能。
+    >1    stop slave;
+    >2    ....重新进行slave授权命令(注意主机的二进制日志最新的position值)。
